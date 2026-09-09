@@ -22,12 +22,22 @@ type Queue struct {
 	queued         jobHeap
 	retryBaseDelay time.Duration
 	retryMaxDelay  time.Duration
+	policy         Policy
 }
+
+// policy selects how ready jobs are ordered for assignment
+type Policy string
+
+const (
+	PolicyPriority Policy = "priority"
+	PolicyFIFO     Policy = "fifo"
+)
 
 // options controls retry timing without changing job retry limits
 type Options struct {
 	RetryBaseDelay time.Duration
 	RetryMaxDelay  time.Duration
+	Policy         Policy
 }
 
 // new creates a queue with bounded exponential retry delays
@@ -35,6 +45,7 @@ func New() *Queue {
 	return NewWithOptions(Options{
 		RetryBaseDelay: time.Second,
 		RetryMaxDelay:  time.Minute,
+		Policy:         PolicyPriority,
 	})
 }
 
@@ -46,10 +57,14 @@ func NewWithOptions(options Options) *Queue {
 	if options.RetryMaxDelay < options.RetryBaseDelay {
 		options.RetryMaxDelay = time.Minute
 	}
+	if options.Policy != PolicyFIFO {
+		options.Policy = PolicyPriority
+	}
 	return &Queue{
 		jobs:           make(map[string]*job.Job),
 		retryBaseDelay: options.RetryBaseDelay,
 		retryMaxDelay:  options.RetryMaxDelay,
+		policy:         options.Policy,
 	}
 }
 
@@ -68,6 +83,7 @@ func (q *Queue) Enqueue(newJob *job.Job) error {
 
 	stored := newJob.Clone()
 	stored.Status = job.StatusQueued
+	stored.AddEvent("created", job.StatusQueued, "", "job submitted", time.Now().UTC())
 	q.jobs[stored.ID] = stored
 	q.pushLocked(stored)
 	return nil
@@ -89,6 +105,7 @@ func (q *Queue) Restore(jobs []*job.Job) error {
 			stored.Status = job.StatusQueued
 			stored.StartedAt = nil
 			stored.WorkerID = ""
+			stored.AddEvent("recovered", job.StatusQueued, "", "job requeued after server restart", time.Now().UTC())
 		}
 		q.jobs[stored.ID] = stored
 		if stored.Status == job.StatusQueued {
@@ -113,7 +130,10 @@ func (q *Queue) Claim(workerID string) (*job.Job, bool) {
 		if stored.NextAttemptAt != nil && stored.NextAttemptAt.After(now) {
 			continue
 		}
-		if bestIndex == -1 || q.queued.Less(index, bestIndex) {
+		if stored.ScheduledAt != nil && stored.ScheduledAt.After(now) {
+			continue
+		}
+		if bestIndex == -1 || q.less(index, bestIndex) {
 			bestIndex = index
 		}
 	}
@@ -128,6 +148,7 @@ func (q *Queue) Claim(workerID string) (*job.Job, bool) {
 	stored.Attempts++
 	stored.WorkerID = workerID
 	stored.NextAttemptAt = nil
+	stored.AddEvent("claimed", job.StatusRunning, workerID, "job claimed by worker", now)
 	return stored.Clone(), true
 }
 
@@ -166,6 +187,7 @@ func (q *Queue) Complete(id, workerID, result string) (*job.Job, error) {
 	stored.NextAttemptAt = nil
 	stored.Result = result
 	stored.Error = ""
+	stored.AddEvent("completed", job.StatusCompleted, workerID, "job completed", now)
 	return stored.Clone(), nil
 }
 
@@ -216,6 +238,7 @@ func (q *Queue) failLocked(stored *job.Job, result, failure string, now time.Tim
 		stored.WorkerID = ""
 		nextAttempt := now.Add(q.retryDelay(stored.Attempts))
 		stored.NextAttemptAt = &nextAttempt
+		stored.AddEvent("retry_scheduled", job.StatusQueued, "", failure, now)
 		q.pushLocked(stored)
 		return
 	}
@@ -224,6 +247,7 @@ func (q *Queue) failLocked(stored *job.Job, result, failure string, now time.Tim
 	stored.CompletedAt = &now
 	stored.NextAttemptAt = nil
 	stored.WorkerID = ""
+	stored.AddEvent("failed", job.StatusFailed, "", failure, now)
 }
 
 func (q *Queue) retryDelay(attempt int) time.Duration {
@@ -262,7 +286,41 @@ func (q *Queue) Cancel(id string) (*job.Job, error) {
 	stored.Status = job.StatusCancelled
 	stored.CompletedAt = &now
 	stored.NextAttemptAt = nil
+	stored.AddEvent("cancelled", job.StatusCancelled, stored.WorkerID, "job cancelled", now)
 	return stored.Clone(), nil
+}
+
+// stats summarizes current job counts without exposing queue internals
+type Stats struct {
+	Total     int `json:"total"`
+	Queued    int `json:"queued"`
+	Running   int `json:"running"`
+	Completed int `json:"completed"`
+	Failed    int `json:"failed"`
+	Cancelled int `json:"cancelled"`
+}
+
+func (q *Queue) Statistics() Stats {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+
+	var stats Stats
+	for _, stored := range q.jobs {
+		stats.Total++
+		switch stored.Status {
+		case job.StatusQueued:
+			stats.Queued++
+		case job.StatusRunning:
+			stats.Running++
+		case job.StatusCompleted:
+			stats.Completed++
+		case job.StatusFailed:
+			stats.Failed++
+		case job.StatusCancelled:
+			stats.Cancelled++
+		}
+	}
+	return stats
 }
 
 func (q *Queue) Get(id string) (*job.Job, error) {
@@ -308,6 +366,13 @@ func (h jobHeap) Less(i, j int) bool {
 		return h[i].priority > h[j].priority
 	}
 	return h[i].createdAt.Before(h[j].createdAt)
+}
+
+func (q *Queue) less(i, j int) bool {
+	if q.policy == PolicyFIFO {
+		return q.queued[i].createdAt.Before(q.queued[j].createdAt)
+	}
+	return q.queued.Less(i, j)
 }
 
 func (h jobHeap) Swap(i, j int) {

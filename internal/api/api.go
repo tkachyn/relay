@@ -13,6 +13,7 @@ type CreateJobRequest struct {
 	Priority   int    `json:"priority"`
 	MaxRetries int    `json:"max_retries"`
 	Timeout    string `json:"timeout"`
+	RunAt      string `json:"run_at"`
 }
 
 // register worker request identifies the worker that is joining the server
@@ -44,6 +45,35 @@ type JobListResponse struct {
 // worker list response wraps workers to keep the API shape extensible
 type WorkerListResponse struct {
 	Workers []Worker `json:"workers"`
+}
+
+// queue stats reports the current lifecycle counts for jobs
+type QueueStats struct {
+	Total     int `json:"total"`
+	Queued    int `json:"queued"`
+	Running   int `json:"running"`
+	Completed int `json:"completed"`
+	Failed    int `json:"failed"`
+	Cancelled int `json:"cancelled"`
+}
+
+// worker stats reports worker liveness totals
+type WorkerStats struct {
+	Total   int `json:"total"`
+	Healthy int `json:"healthy"`
+	Dead    int `json:"dead"`
+}
+
+// stats response combines operational counts with metric values
+type StatsResponse struct {
+	Queue   QueueStats         `json:"queue"`
+	Workers WorkerStats        `json:"workers"`
+	Metrics map[string]float64 `json:"metrics"`
+}
+
+// history response contains the ordered lifecycle events for one job
+type HistoryResponse struct {
+	Events []job.Event `json:"events"`
 }
 
 // error response provides a consistent message for failed API requests

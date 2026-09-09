@@ -13,6 +13,15 @@ const (
 	StatusCancelled Status = "cancelled"
 )
 
+// event records one observable transition in a job's lifecycle
+type Event struct {
+	At       time.Time `json:"at"`
+	Type     string    `json:"type"`
+	Status   Status    `json:"status"`
+	WorkerID string    `json:"worker_id,omitempty"`
+	Message  string    `json:"message,omitempty"`
+}
+
 // job contains the durable metadata needed to schedule and recover work
 type Job struct {
 	ID            string     `json:"id"`
@@ -26,10 +35,12 @@ type Job struct {
 	Attempts      int        `json:"attempts"`
 	MaxRetries    int        `json:"max_retries"`
 	Timeout       string     `json:"timeout,omitempty"`
+	ScheduledAt   *time.Time `json:"scheduled_at,omitempty"`
 	NextAttemptAt *time.Time `json:"next_attempt_at,omitempty"`
 	WorkerID      string     `json:"worker_id,omitempty"`
 	Result        string     `json:"result,omitempty"`
 	Error         string     `json:"error,omitempty"`
+	History       []Event    `json:"history,omitempty"`
 }
 
 // new creates a queued job with its initial scheduling metadata
@@ -63,5 +74,19 @@ func (j *Job) Clone() *Job {
 		nextAttemptAt := *j.NextAttemptAt
 		clone.NextAttemptAt = &nextAttemptAt
 	}
+	if j.History != nil {
+		clone.History = append([]Event(nil), j.History...)
+	}
 	return &clone
+}
+
+// add event appends an immutable lifecycle record to the job history
+func (j *Job) AddEvent(eventType string, status Status, workerID, message string, at time.Time) {
+	j.History = append(j.History, Event{
+		At:       at,
+		Type:     eventType,
+		Status:   status,
+		WorkerID: workerID,
+		Message:  message,
+	})
 }

@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log/slog"
 	"net/http"
 	"strings"
 	"sync"
@@ -12,7 +14,9 @@ import (
 	"time"
 
 	"github.com/tkachyn/relay/internal/api"
+	"github.com/tkachyn/relay/internal/dashboard"
 	"github.com/tkachyn/relay/internal/job"
+	"github.com/tkachyn/relay/internal/metrics"
 	"github.com/tkachyn/relay/internal/persistence"
 	"github.com/tkachyn/relay/internal/queue"
 )
@@ -26,6 +30,8 @@ type Server struct {
 	store            *persistence.Store
 	heartbeatTimeout time.Duration
 	monitorInterval  time.Duration
+	metrics          *metrics.Metrics
+	logger           *slog.Logger
 }
 
 // options controls recovery timing and the on-disk state location
@@ -35,6 +41,9 @@ type Options struct {
 	MonitorInterval  time.Duration
 	RetryBaseDelay   time.Duration
 	RetryMaxDelay    time.Duration
+	SchedulingPolicy queue.Policy
+	Metrics          *metrics.Metrics
+	Logger           *slog.Logger
 }
 
 // new creates an in-memory server with default recovery settings
@@ -56,10 +65,22 @@ func NewWithOptions(options Options) (*Server, error) {
 	}
 
 	server := &Server{
-		queue:            queue.NewWithOptions(queue.Options{RetryBaseDelay: options.RetryBaseDelay, RetryMaxDelay: options.RetryMaxDelay}),
+		queue: queue.NewWithOptions(queue.Options{
+			RetryBaseDelay: options.RetryBaseDelay,
+			RetryMaxDelay:  options.RetryMaxDelay,
+			Policy:         options.SchedulingPolicy,
+		}),
 		workers:          make(map[string]api.Worker),
 		heartbeatTimeout: options.HeartbeatTimeout,
 		monitorInterval:  options.MonitorInterval,
+		metrics:          options.Metrics,
+		logger:           options.Logger,
+	}
+	if server.metrics == nil {
+		server.metrics = metrics.New()
+	}
+	if server.logger == nil {
+		server.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	if options.StoragePath == "" {
 		return server, nil
@@ -88,11 +109,17 @@ func (s *Server) Start(ctx context.Context) {
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", s.health)
+	mux.HandleFunc("/metrics", s.metricsHandler)
+	mux.HandleFunc("/v1/stats", s.stats)
 	mux.HandleFunc("/v1/jobs", s.jobs)
 	mux.HandleFunc("/v1/jobs/", s.jobByID)
 	mux.HandleFunc("/v1/workers", s.workersList)
 	mux.HandleFunc("/v1/workers/register", s.registerWorker)
 	mux.HandleFunc("/v1/workers/", s.workerByID)
+	mux.Handle("/dashboard/", dashboard.Handler())
+	mux.HandleFunc("/dashboard", func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, "/dashboard/", http.StatusMovedPermanently)
+	})
 	return mux
 }
 
@@ -102,6 +129,25 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) metricsHandler(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	s.refreshMetrics()
+	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
+	_, _ = w.Write([]byte(s.metrics.Prometheus()))
+}
+
+func (s *Server) stats(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+	s.refreshMetrics()
+	writeJSON(w, http.StatusOK, s.statistics())
 }
 
 func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
@@ -130,12 +176,23 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 		}
+		var scheduledAt *time.Time
+		if request.RunAt != "" {
+			parsed, err := time.Parse(time.RFC3339, request.RunAt)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "run_at must be an RFC3339 timestamp")
+				return
+			}
+			parsed = parsed.UTC()
+			scheduledAt = &parsed
+		}
 
 		now := time.Now().UTC()
 		id := fmt.Sprintf("job-%d-%d", now.UnixNano(), s.jobSequence.Add(1))
 		newJob := job.New(id, request.Type, request.Payload, request.Priority, now)
 		newJob.MaxRetries = request.MaxRetries
 		newJob.Timeout = request.Timeout
+		newJob.ScheduledAt = scheduledAt
 		if err := s.queue.Enqueue(newJob); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
@@ -144,6 +201,8 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		s.metrics.Inc("relay_jobs_submitted_total")
+		s.logger.Info("job submitted", "job_id", newJob.ID, "priority", newJob.Priority, "scheduled_at", newJob.ScheduledAt)
 		writeJSON(w, http.StatusCreated, newJob)
 	default:
 		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
@@ -168,6 +227,16 @@ func (s *Server) jobByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(parts) == 2 && parts[1] == "history" && r.Method == http.MethodGet {
+		current, err := s.queue.Get(id)
+		if err != nil {
+			writeQueueError(w, err)
+			return
+		}
+		writeJSON(w, http.StatusOK, api.HistoryResponse{Events: current.History})
+		return
+	}
+
 	if len(parts) == 2 && parts[1] == "cancel" && r.Method == http.MethodPost {
 		current, err := s.queue.Cancel(id)
 		if err != nil {
@@ -178,6 +247,8 @@ func (s *Server) jobByID(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
+		s.metrics.Inc("relay_jobs_cancelled_total")
+		s.logger.Info("job cancelled", "job_id", id)
 		writeJSON(w, http.StatusOK, current)
 		return
 	}
@@ -221,6 +292,16 @@ func (s *Server) result(w http.ResponseWriter, r *http.Request, id string) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	if current.Status == job.StatusQueued {
+		s.metrics.Inc("relay_jobs_retried_total")
+		s.logger.Warn("job retry scheduled", "job_id", id, "attempts", current.Attempts, "error", current.Error)
+	} else if current.Status == job.StatusCompleted {
+		s.metrics.Inc("relay_jobs_completed_total")
+		s.logger.Info("job completed", "job_id", id, "worker_id", request.WorkerID)
+	} else {
+		s.metrics.Inc("relay_jobs_failed_total")
+		s.logger.Warn("job failed", "job_id", id, "worker_id", request.WorkerID, "error", current.Error)
+	}
 	writeJSON(w, http.StatusOK, current)
 }
 
@@ -251,6 +332,9 @@ func (s *Server) registerWorker(w http.ResponseWriter, r *http.Request) {
 	if err := s.persist(); err != nil {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
+	}
+	if !exists {
+		s.metrics.Inc("relay_workers_registered_total")
 	}
 	writeJSON(w, http.StatusOK, registered)
 }
@@ -305,6 +389,9 @@ func (s *Server) workerByID(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
+	s.metrics.Inc("relay_jobs_claimed_total")
+	s.metrics.Observe("relay_job_queue_latency_seconds", time.Since(current.CreatedAt).Seconds())
+	s.logger.Info("job claimed", "job_id", current.ID, "worker_id", workerID)
 	writeJSON(w, http.StatusOK, current)
 }
 
@@ -366,7 +453,12 @@ func (s *Server) monitor(ctx context.Context) {
 
 // recover failures converts expired attempts and dead workers into retries
 func (s *Server) recoverFailures(now time.Time) {
-	changed := len(s.queue.Expire(now)) > 0
+	expired := s.queue.Expire(now)
+	changed := len(expired) > 0
+	for _, current := range expired {
+		s.metrics.Inc("relay_jobs_timed_out_total")
+		s.logger.Warn("job timed out", "job_id", current.ID, "attempts", current.Attempts)
+	}
 	var lostWorkers []string
 
 	s.workersMu.Lock()
@@ -381,8 +473,12 @@ func (s *Server) recoverFailures(now time.Time) {
 	s.workersMu.Unlock()
 
 	for _, workerID := range lostWorkers {
-		if len(s.queue.RecoverWorker(workerID)) > 0 {
+		recovered := s.queue.RecoverWorker(workerID)
+		if len(recovered) > 0 {
 			changed = true
+			s.metrics.Inc("relay_worker_failures_total")
+			s.metrics.Add("relay_jobs_recovered_total", uint64(len(recovered)))
+			s.logger.Warn("worker lost", "worker_id", workerID, "jobs_recovered", len(recovered))
 		}
 	}
 	if len(lostWorkers) > 0 {
@@ -390,6 +486,61 @@ func (s *Server) recoverFailures(now time.Time) {
 	}
 	if changed {
 		_ = s.persist()
+	}
+}
+
+func (s *Server) refreshMetrics() {
+	queueStats := s.queue.Statistics()
+	s.metrics.Set("relay_queue_depth", float64(queueStats.Queued))
+	s.metrics.Set("relay_running_jobs", float64(queueStats.Running))
+
+	s.workersMu.Lock()
+	healthy := 0
+	dead := 0
+	for _, worker := range s.workers {
+		if worker.Status == "healthy" {
+			healthy++
+		} else {
+			dead++
+		}
+	}
+	s.workersMu.Unlock()
+	s.metrics.Set("relay_active_workers", float64(healthy))
+	s.metrics.Set("relay_dead_workers", float64(dead))
+}
+
+func (s *Server) statistics() api.StatsResponse {
+	queueStats := s.queue.Statistics()
+	s.workersMu.Lock()
+	workerStats := api.WorkerStats{Total: len(s.workers)}
+	for _, worker := range s.workers {
+		if worker.Status == "healthy" {
+			workerStats.Healthy++
+		} else {
+			workerStats.Dead++
+		}
+	}
+	s.workersMu.Unlock()
+
+	snapshot := s.metrics.Snapshot()
+	values := make(map[string]float64, len(snapshot.Counters)+len(snapshot.Gauges))
+	for name, value := range snapshot.Counters {
+		values[name] = float64(value)
+	}
+	for name, value := range snapshot.Gauges {
+		values[name] = value
+	}
+	return api.StatsResponse{
+		Queue: api.QueueStats{
+			Total:     queueStats.Total,
+			Queued:    queueStats.Queued,
+			Running:   queueStats.Running,
+			Completed: queueStats.Completed,
+			Failed:    queueStats.Failed,
+			Cancelled: queueStats.Cancelled,
+		},
+		Workers: workerStats,
+		Metrics: values,
 	}
 }
 
@@ -405,10 +556,14 @@ func (s *Server) persist() error {
 		workers = append(workers, worker)
 	}
 	s.workersMu.Unlock()
-	return s.store.Save(persistence.State{
+	err := s.store.Save(persistence.State{
 		Jobs:    s.queue.List(),
 		Workers: workers,
 	})
+	if err != nil {
+		s.logger.Error("persist state failed", "error", err)
+	}
+	return err
 }
 
 func writeQueueError(w http.ResponseWriter, err error) {

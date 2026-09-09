@@ -2,8 +2,11 @@ package server
 
 import (
 	"context"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -61,6 +64,20 @@ func TestJobLifecycleThroughHTTP(t *testing.T) {
 	}
 	if current.Status != job.StatusCompleted {
 		t.Fatalf("got status %s, expected %s", current.Status, job.StatusCompleted)
+	}
+	history, err := apiClient.GetHistory(created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(history) != 3 {
+		t.Fatalf("got history length %d, expected 3", len(history))
+	}
+	stats, err := apiClient.GetStats()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stats.Queue.Completed != 1 || stats.Workers.Healthy != 1 {
+		t.Fatalf("unexpected stats: %+v", stats)
 	}
 }
 
@@ -175,6 +192,32 @@ func TestServerRecoversJobsFromDeadWorker(t *testing.T) {
 		time.Sleep(time.Millisecond)
 	}
 	t.Fatal("worker failure was not recovered")
+}
+
+func TestOperationalEndpoints(t *testing.T) {
+	testServer := httptest.NewServer(New().Handler())
+	defer testServer.Close()
+
+	for _, path := range []string{"/dashboard/", "/metrics", "/v1/stats"} {
+		response, err := testServer.Client().Get(testServer.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		body, readErr := io.ReadAll(response.Body)
+		response.Body.Close()
+		if readErr != nil {
+			t.Fatal(readErr)
+		}
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("%s returned %d: %s", path, response.StatusCode, body)
+		}
+		if path == "/dashboard/" && !strings.Contains(string(body), "Relay Dashboard") {
+			t.Fatal("dashboard response did not contain its title")
+		}
+		if path == "/metrics" && !strings.Contains(string(body), "relay_queue_depth") {
+			t.Fatal("metrics response did not contain queue depth")
+		}
+	}
 }
 
 func NewWithOptionsOrFail(t *testing.T, options Options) *Server {

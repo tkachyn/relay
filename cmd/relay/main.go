@@ -6,7 +6,9 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"log/slog"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"strings"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/tkachyn/relay/internal/api"
 	"github.com/tkachyn/relay/internal/client"
+	"github.com/tkachyn/relay/internal/queue"
 	"github.com/tkachyn/relay/internal/server"
 	"github.com/tkachyn/relay/internal/worker"
 )
@@ -37,6 +40,8 @@ func main() {
 		err = runJobs(os.Args[2:])
 	case "job":
 		err = runJob(os.Args[2:])
+	case "history":
+		err = runHistory(os.Args[2:])
 	case "cancel":
 		err = runCancel(os.Args[2:])
 	case "workers":
@@ -59,8 +64,13 @@ func runServer(args []string) error {
 	monitorInterval := flags.Duration("monitor-interval", time.Second, "interval for timeout and worker failure checks")
 	retryBaseDelay := flags.Duration("retry-base-delay", time.Second, "initial retry delay")
 	retryMaxDelay := flags.Duration("retry-max-delay", time.Minute, "maximum retry delay")
+	schedulingPolicy := flags.String("scheduling-policy", string(queue.PolicyPriority), "job scheduling policy: priority or fifo")
+	pprofListen := flags.String("pprof", "", "optional address for Go pprof endpoints")
 	if err := flags.Parse(args); err != nil {
 		return err
+	}
+	if *schedulingPolicy != string(queue.PolicyPriority) && *schedulingPolicy != string(queue.PolicyFIFO) {
+		return errors.New("scheduling-policy must be priority or fifo")
 	}
 
 	relayServer, err := server.NewWithOptions(server.Options{
@@ -69,6 +79,8 @@ func runServer(args []string) error {
 		MonitorInterval:  *monitorInterval,
 		RetryBaseDelay:   *retryBaseDelay,
 		RetryMaxDelay:    *retryMaxDelay,
+		SchedulingPolicy: queue.Policy(*schedulingPolicy),
+		Logger:           slog.New(slog.NewTextHandler(os.Stdout, nil)),
 	})
 	if err != nil {
 		return fmt.Errorf("load server state: %w", err)
@@ -80,6 +92,18 @@ func runServer(args []string) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	relayServer.Start(ctx)
+	if *pprofListen != "" {
+		profileServer := &http.Server{Addr: *pprofListen, Handler: http.DefaultServeMux}
+		go func() {
+			<-ctx.Done()
+			_ = profileServer.Shutdown(context.Background())
+		}()
+		go func() {
+			if profileErr := profileServer.ListenAndServe(); profileErr != nil && !errors.Is(profileErr, http.ErrServerClosed) {
+				fmt.Fprintln(os.Stderr, "pprof server:", profileErr)
+			}
+		}()
+	}
 	go func() {
 		<-ctx.Done()
 		_ = httpServer.Shutdown(context.Background())
@@ -113,6 +137,7 @@ func runSubmit(args []string) error {
 	priority := flags.Int("priority", 0, "job priority")
 	maxRetries := flags.Int("max-retries", 0, "maximum number of retries after a failure")
 	timeout := flags.String("timeout", "", "maximum execution duration, such as 30s")
+	runAt := flags.String("run-at", "", "RFC3339 timestamp when execution may begin")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -126,6 +151,7 @@ func runSubmit(args []string) error {
 		Priority:   *priority,
 		MaxRetries: *maxRetries,
 		Timeout:    *timeout,
+		RunAt:      *runAt,
 	})
 	if err != nil {
 		return err
@@ -184,6 +210,22 @@ func runCancel(args []string) error {
 	return nil
 }
 
+func runHistory(args []string) error {
+	flags := flag.NewFlagSet("history", flag.ContinueOnError)
+	serverURL := flags.String("server", "http://127.0.0.1:8080", "relay server URL")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if len(flags.Args()) != 1 {
+		return errors.New("history requires an id")
+	}
+	events, err := client.New(*serverURL).GetHistory(flags.Args()[0])
+	if err != nil {
+		return err
+	}
+	return printJSON(events)
+}
+
 func runWorkers(args []string) error {
 	flags := flag.NewFlagSet("workers", flag.ContinueOnError)
 	serverURL := flags.String("server", "http://127.0.0.1:8080", "relay server URL")
@@ -211,5 +253,5 @@ func printJSON(value any) error {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: relay <server|worker|submit|jobs|job|cancel|workers>")
+	fmt.Fprintln(os.Stderr, "usage: relay <server|worker|submit|jobs|job|history|cancel|workers>")
 }

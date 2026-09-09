@@ -144,3 +144,65 @@ func TestRestoreRequeuesRunningJobs(t *testing.T) {
 		t.Fatalf("unexpected restored job: %+v", current)
 	}
 }
+
+func TestDelayedJobIsUnavailableUntilScheduledTime(t *testing.T) {
+	q := New()
+	scheduledAt := time.Now().UTC().Add(40 * time.Millisecond)
+	delayed := job.New("delayed", "command", "echo delayed", 10, time.Now().UTC())
+	delayed.ScheduledAt = &scheduledAt
+	if err := q.Enqueue(delayed); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := q.Claim("worker-1"); ok {
+		t.Fatal("claimed a delayed job before its schedule")
+	}
+	time.Sleep(50 * time.Millisecond)
+	current, ok := q.Claim("worker-1")
+	if !ok || current.ID != "delayed" {
+		t.Fatalf("expected delayed job after schedule, got %v", current)
+	}
+}
+
+func TestFIFOPolicyIgnoresPriority(t *testing.T) {
+	q := NewWithOptions(Options{Policy: PolicyFIFO})
+	createdAt := time.Now().UTC()
+	early := job.New("early", "command", "echo early", 1, createdAt)
+	late := job.New("late", "command", "echo late", 10, createdAt.Add(time.Millisecond))
+	if err := q.Enqueue(early); err != nil {
+		t.Fatal(err)
+	}
+	if err := q.Enqueue(late); err != nil {
+		t.Fatal(err)
+	}
+	current, ok := q.Claim("worker-1")
+	if !ok || current.ID != "early" {
+		t.Fatalf("expected FIFO job early, got %v", current)
+	}
+}
+
+func TestJobHistoryRecordsTransitions(t *testing.T) {
+	q := New()
+	current := job.New("history", "command", "echo history", 0, time.Now().UTC())
+	if err := q.Enqueue(current); err != nil {
+		t.Fatal(err)
+	}
+	claimed, ok := q.Claim("worker-1")
+	if !ok {
+		t.Fatal("expected job to be claimed")
+	}
+	if _, err := q.Complete(claimed.ID, "worker-1", "history"); err != nil {
+		t.Fatal(err)
+	}
+	finished, err := q.Get("history")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(finished.History) != 3 {
+		t.Fatalf("got history length %d: %+v", len(finished.History), finished.History)
+	}
+	for index, eventType := range []string{"created", "claimed", "completed"} {
+		if finished.History[index].Type != eventType {
+			t.Fatalf("event %d was %q, expected %q", index, finished.History[index].Type, eventType)
+		}
+	}
+}

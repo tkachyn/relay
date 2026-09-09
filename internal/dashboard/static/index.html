@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Relay Dashboard</title>
+    <link rel="stylesheet" href="/dashboard/style.css">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="hero">
+        <div>
+          <p class="eyebrow">relay</p>
+          <h1>Job operations</h1>
+          <p class="muted">Live view of queue state, workers, and execution history</p>
+        </div>
+        <span id="last-updated" class="pill">loading</span>
+      </header>
+
+      <section class="cards" aria-label="queue summary">
+        <article class="card"><span>Queued</span><strong id="queued">0</strong></article>
+        <article class="card"><span>Running</span><strong id="running">0</strong></article>
+        <article class="card"><span>Completed</span><strong id="completed">0</strong></article>
+        <article class="card"><span>Failed</span><strong id="failed">0</strong></article>
+        <article class="card"><span>Healthy workers</span><strong id="healthy-workers">0</strong></article>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">observability</p>
+            <h2>Metrics</h2>
+          </div>
+        </div>
+        <div id="metrics-cards" class="metrics-grid"></div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">queue</p>
+            <h2>Recent jobs</h2>
+          </div>
+          <button id="refresh" class="button secondary">Refresh</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>ID</th><th>Type</th><th>Status</th><th>Priority</th><th>Attempts</th><th>Worker</th><th>Actions</th></tr>
+            </thead>
+            <tbody id="jobs"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section class="panel">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">cluster</p>
+            <h2>Workers</h2>
+          </div>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>ID</th><th>Status</th><th>Registered</th><th>Last seen</th></tr></thead>
+            <tbody id="workers"></tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="history-panel" class="panel hidden">
+        <div class="panel-heading">
+          <div>
+            <p class="eyebrow">history</p>
+            <h2 id="history-title">Job history</h2>
+          </div>
+          <button id="close-history" class="button secondary">Close</button>
+        </div>
+        <pre id="history"></pre>
+      </section>
+    </main>
+    <script src="/dashboard/app.js"></script>
+  </body>
+</html>

@@ -63,6 +63,22 @@ func (c *Client) GetJob(id string) (*job.Job, error) {
 	return &result, nil
 }
 
+func (c *Client) GetHistory(id string) ([]job.Event, error) {
+	var response api.HistoryResponse
+	if err := c.do(http.MethodGet, "/v1/jobs/"+id+"/history", nil, http.StatusOK, &response); err != nil {
+		return nil, err
+	}
+	return response.Events, nil
+}
+
+func (c *Client) GetStats() (*api.StatsResponse, error) {
+	var response api.StatsResponse
+	if err := c.do(http.MethodGet, "/v1/stats", nil, http.StatusOK, &response); err != nil {
+		return nil, err
+	}
+	return &response, nil
+}
+
 func (c *Client) CancelJob(id string) (*job.Job, error) {
 	var result job.Job
 	if err := c.do(http.MethodPost, "/v1/jobs/"+id+"/cancel", nil, http.StatusOK, &result); err != nil {

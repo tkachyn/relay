@@ -8,7 +8,10 @@ The server accepts command jobs over HTTP, stores them in a priority queue, and 
 
 - submit jobs through the HTTP API or command line
 - prioritize queued jobs
+- schedule jobs for a future RFC3339 timestamp
+- choose priority or FIFO scheduling
 - inspect job status, output, and errors
+- inspect job history, queue statistics, and worker statistics
 - cancel queued jobs or mark running jobs cancelled
 - retry failed jobs with configurable limits and exponential backoff
 - enforce execution timeouts
@@ -18,6 +21,10 @@ The server accepts command jobs over HTTP, stores them in a priority queue, and 
 - execute command payloads using the host operating system's shell
 - persist job and worker state to a JSON file
 - recover unfinished jobs after a server restart
+- expose Prometheus-compatible metrics
+- provide structured server events through `log/slog`
+- provide an embedded operations dashboard
+- include queue, HTTP, persistence, and load benchmarks
 - protect shared queue state with synchronization
 - verify queue and worker behavior with unit, integration, and race tests
 
@@ -35,6 +42,11 @@ priority queue and state store
       +------------+------------+
       v            v            v
   worker-1     worker-2     worker-3
+
+dashboard and metrics
+          |
+          v
+      HTTP server
 ```
 
 Jobs move through these states:
@@ -85,6 +97,8 @@ Cancel a job:
 go run ./cmd/relay cancel <id>
 ```
 
+Open the dashboard at `http://127.0.0.1:8080/dashboard/`.
+
 The server listens on `127.0.0.1:8080` by default. Use `--server` with client and worker commands when the server uses another address.
 
 ## Command line interface
@@ -94,7 +108,8 @@ The server listens on `127.0.0.1:8080` by default. Use `--server` with client an
 ```text
 relay server [--listen address] [--data path] [--heartbeat-timeout duration]
              [--monitor-interval duration] [--retry-base-delay duration]
-             [--retry-max-delay duration]
+             [--retry-max-delay duration] [--scheduling-policy priority|fifo]
+             [--pprof address]
 ```
 
 ### Start a worker
@@ -109,12 +124,14 @@ The default worker ID combines the host name and process ID. Set `--id` when run
 
 ```text
 relay submit [--server url] [--type type] [--priority number]
-             [--max-retries number] [--timeout duration] command
+             [--max-retries number] [--timeout duration] [--run-at timestamp] command
 ```
 
 The command can contain spaces when passed as one quoted argument. The command's combined standard output and standard error are returned as the job result.
 
 `--max-retries` controls how many additional attempts are allowed after the initial attempt. `--timeout` accepts Go duration strings such as `30s` or `2m`.
+
+`--run-at` accepts an RFC3339 timestamp. `relay history <id>` prints the lifecycle events recorded for a job.
 
 ### Inspect and cancel jobs
 
@@ -123,6 +140,7 @@ relay jobs [--server url]
 relay job [--server url] <id>
 relay cancel [--server url] <id>
 relay workers [--server url]
+relay history [--server url] <id>
 ```
 
 ## HTTP API
@@ -131,12 +149,16 @@ relay workers [--server url]
 - `POST /v1/jobs` creates a job
 - `GET /v1/jobs` lists jobs
 - `GET /v1/jobs/{id}` returns one job
+- `GET /v1/jobs/{id}/history` returns lifecycle events
 - `POST /v1/jobs/{id}/cancel` cancels a job
 - `POST /v1/workers/register` registers a worker
 - `POST /v1/workers/{id}/heartbeat` records worker health
 - `GET /v1/workers` lists workers
 - `POST /v1/workers/{id}/claim` claims the next queued job
 - `POST /v1/jobs/{id}/result` reports a worker result
+- `GET /v1/stats` returns queue and worker statistics
+- `GET /metrics` returns Prometheus-compatible metrics
+- `GET /dashboard/` serves the embedded dashboard
 
 Create a job:
 
@@ -146,7 +168,8 @@ Create a job:
   "payload": "echo hello",
   "priority": 1,
   "max_retries": 3,
-  "timeout": "30s"
+  "timeout": "30s",
+  "run_at": "2026-09-09T12:00:00Z"
 }
 ```
 
@@ -169,6 +192,8 @@ Report a successful result:
 - cancelling a running job changes its recorded state but does not interrupt the command already running on the worker
 - workers send periodic heartbeats while they are running
 - retry and timeout settings are applied by the server and worker together
+- the dashboard and metrics endpoints do not provide authentication
+- `--pprof` should only bind to a trusted interface
 
 Only submit commands that are trusted to run on the worker host.
 
@@ -197,5 +222,24 @@ Run static checks:
 ```bash
 go vet ./...
 ```
+
+Run Go benchmarks:
+
+```bash
+go test -bench '^Benchmark' -benchmem ./internal/queue ./internal/server ./internal/persistence
+```
+
+Run the submission load generator against a running server:
+
+```bash
+go run ./cmd/relay-load -clients 10 -requests 1000
+```
+
+Read the detailed guides:
+
+- [architecture](docs/architecture.md)
+- [protocol](docs/protocol.md)
+- [persistence](docs/persistence.md)
+- [benchmarks](docs/benchmarks.md)
 
 The repository uses the MIT License.

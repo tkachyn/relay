@@ -1,0 +1,229 @@
+:root {
+  color-scheme: dark;
+  font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+  background: #0c1220;
+  color: #e8eef9;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  background:
+    radial-gradient(circle at top right, #1b3658 0, transparent 38rem),
+    #0c1220;
+}
+
+.shell {
+  width: min(1180px, calc(100% - 2rem));
+  margin: 0 auto;
+  padding: 3rem 0;
+}
+
+.hero,
+.panel-heading,
+.cards {
+  display: flex;
+  gap: 1rem;
+}
+
+.hero,
+.panel-heading {
+  align-items: center;
+  justify-content: space-between;
+}
+
+.hero {
+  margin-bottom: 2rem;
+}
+
+.eyebrow {
+  margin: 0 0 0.45rem;
+  color: #7dd3fc;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+h1,
+h2,
+p {
+  margin-top: 0;
+}
+
+h1 {
+  margin-bottom: 0.6rem;
+  font-size: clamp(2rem, 5vw, 3.5rem);
+}
+
+h2 {
+  margin-bottom: 0;
+  font-size: 1.2rem;
+}
+
+.muted,
+.card span {
+  color: #9aabc4;
+}
+
+.pill,
+.button {
+  border: 1px solid #2d4567;
+  border-radius: 0.55rem;
+  background: #142238;
+  color: #c9dcf8;
+  font: inherit;
+}
+
+.pill {
+  padding: 0.5rem 0.75rem;
+  font-size: 0.78rem;
+}
+
+.cards {
+  flex-wrap: wrap;
+  margin-bottom: 1.5rem;
+}
+
+.card {
+  flex: 1 1 160px;
+  min-height: 110px;
+  padding: 1.1rem;
+  border: 1px solid #203653;
+  border-radius: 0.9rem;
+  background: rgba(17, 31, 53, 0.88);
+}
+
+.card span,
+.card strong {
+  display: block;
+}
+
+.card strong {
+  margin-top: 0.55rem;
+  color: #f8fbff;
+  font-size: 2rem;
+}
+
+.metrics-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.8rem;
+  padding: 1.2rem;
+}
+
+.metric {
+  padding: 0.9rem;
+  border: 1px solid #203653;
+  border-radius: 0.65rem;
+  background: #101e33;
+}
+
+.metric span,
+.metric strong {
+  display: block;
+}
+
+.metric span {
+  overflow: hidden;
+  color: #8ca3c3;
+  font-size: 0.72rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.metric strong {
+  margin-top: 0.35rem;
+  color: #f8fbff;
+  font-size: 1.3rem;
+}
+
+.panel {
+  margin-top: 1.5rem;
+  overflow: hidden;
+  border: 1px solid #203653;
+  border-radius: 0.9rem;
+  background: rgba(15, 27, 47, 0.9);
+}
+
+.panel-heading {
+  padding: 1.2rem 1.3rem;
+  border-bottom: 1px solid #203653;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  white-space: nowrap;
+}
+
+th,
+td {
+  padding: 0.9rem 1.3rem;
+  border-bottom: 1px solid #1d304b;
+  text-align: left;
+  font-size: 0.88rem;
+}
+
+th {
+  color: #8ca3c3;
+  font-size: 0.72rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+tr:last-child td {
+  border-bottom: 0;
+}
+
+.button {
+  margin: 0.15rem;
+  padding: 0.4rem 0.65rem;
+  cursor: pointer;
+  font-size: 0.78rem;
+}
+
+.button:hover {
+  border-color: #7dd3fc;
+}
+
+.button.danger {
+  color: #fecaca;
+}
+
+.button.link {
+  color: #7dd3fc;
+}
+
+pre {
+  max-height: 25rem;
+  margin: 0;
+  overflow: auto;
+  padding: 1.3rem;
+  color: #c9dcf8;
+  font-size: 0.8rem;
+}
+
+.hidden {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .shell {
+    width: min(100% - 1rem, 1180px);
+    padding-top: 1.5rem;
+  }
+
+  .hero {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
