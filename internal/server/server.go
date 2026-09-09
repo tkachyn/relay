@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,21 +13,71 @@ import (
 
 	"github.com/tkachyn/relay/internal/api"
 	"github.com/tkachyn/relay/internal/job"
+	"github.com/tkachyn/relay/internal/persistence"
 	"github.com/tkachyn/relay/internal/queue"
 )
 
 type Server struct {
-	queue       *queue.Queue
-	workersMu   sync.Mutex
-	workers     map[string]api.Worker
-	jobSequence atomic.Uint64
+	queue            *queue.Queue
+	workersMu        sync.Mutex
+	workers          map[string]api.Worker
+	jobSequence      atomic.Uint64
+	store            *persistence.Store
+	heartbeatTimeout time.Duration
+	monitorInterval  time.Duration
+}
+
+type Options struct {
+	StoragePath      string
+	HeartbeatTimeout time.Duration
+	MonitorInterval  time.Duration
+	RetryBaseDelay   time.Duration
+	RetryMaxDelay    time.Duration
 }
 
 func New() *Server {
-	return &Server{
-		queue:   queue.New(),
-		workers: make(map[string]api.Worker),
+	server, err := NewWithOptions(Options{})
+	if err != nil {
+		panic(err)
 	}
+	return server
+}
+
+func NewWithOptions(options Options) (*Server, error) {
+	if options.HeartbeatTimeout <= 0 {
+		options.HeartbeatTimeout = 10 * time.Second
+	}
+	if options.MonitorInterval <= 0 {
+		options.MonitorInterval = time.Second
+	}
+
+	server := &Server{
+		queue:            queue.NewWithOptions(queue.Options{RetryBaseDelay: options.RetryBaseDelay, RetryMaxDelay: options.RetryMaxDelay}),
+		workers:          make(map[string]api.Worker),
+		heartbeatTimeout: options.HeartbeatTimeout,
+		monitorInterval:  options.MonitorInterval,
+	}
+	if options.StoragePath == "" {
+		return server, nil
+	}
+
+	server.store = persistence.New(options.StoragePath)
+	state, err := server.store.Load()
+	if err != nil {
+		return nil, err
+	}
+	if err := server.queue.Restore(state.Jobs); err != nil {
+		return nil, err
+	}
+	for _, worker := range state.Workers {
+		worker.Status = "dead"
+		server.workers[worker.ID] = worker
+	}
+	return server, nil
+}
+
+func (s *Server) Start(ctx context.Context) {
+	go s.monitor(ctx)
 }
 
 func (s *Server) Handler() http.Handler {
@@ -64,11 +115,27 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "payload is required")
 			return
 		}
+		if request.MaxRetries < 0 {
+			writeError(w, http.StatusBadRequest, "max_retries must not be negative")
+			return
+		}
+		if request.Timeout != "" {
+			if _, err := time.ParseDuration(request.Timeout); err != nil {
+				writeError(w, http.StatusBadRequest, "timeout must be a valid duration")
+				return
+			}
+		}
 
 		now := time.Now().UTC()
 		id := fmt.Sprintf("job-%d-%d", now.UnixNano(), s.jobSequence.Add(1))
 		newJob := job.New(id, request.Type, request.Payload, request.Priority, now)
+		newJob.MaxRetries = request.MaxRetries
+		newJob.Timeout = request.Timeout
 		if err := s.queue.Enqueue(newJob); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
+		if err := s.persist(); err != nil {
 			writeError(w, http.StatusInternalServerError, err.Error())
 			return
 		}
@@ -102,6 +169,10 @@ func (s *Server) jobByID(w http.ResponseWriter, r *http.Request) {
 			writeQueueError(w, err)
 			return
 		}
+		if err := s.persist(); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 		writeJSON(w, http.StatusOK, current)
 		return
 	}
@@ -123,7 +194,10 @@ func (s *Server) result(w http.ResponseWriter, r *http.Request, id string) {
 		writeError(w, http.StatusBadRequest, "worker_id is required")
 		return
 	}
-	s.touchWorker(request.WorkerID)
+	if !s.touchWorker(request.WorkerID) {
+		writeError(w, http.StatusNotFound, "worker not registered")
+		return
+	}
 
 	var (
 		current *job.Job
@@ -136,6 +210,10 @@ func (s *Server) result(w http.ResponseWriter, r *http.Request, id string) {
 	}
 	if err != nil {
 		writeQueueError(w, err)
+		return
+	}
+	if err := s.persist(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, current)
@@ -162,8 +240,13 @@ func (s *Server) registerWorker(w http.ResponseWriter, r *http.Request) {
 		registered = api.Worker{ID: request.ID, RegisteredAt: now}
 	}
 	registered.LastSeen = now
+	registered.Status = "healthy"
 	s.workers[request.ID] = registered
 	s.workersMu.Unlock()
+	if err := s.persist(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
 	writeJSON(w, http.StatusOK, registered)
 }
 
@@ -184,12 +267,20 @@ func (s *Server) workersList(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) workerByID(w http.ResponseWriter, r *http.Request) {
 	parts := pathParts(strings.TrimPrefix(r.URL.Path, "/v1/workers/"))
-	if len(parts) != 2 || parts[1] != "claim" || r.Method != http.MethodPost {
+	if len(parts) != 2 || r.Method != http.MethodPost {
 		writeError(w, http.StatusNotFound, "route not found")
 		return
 	}
 
 	workerID := parts[0]
+	if parts[1] == "heartbeat" {
+		s.heartbeat(w, workerID)
+		return
+	}
+	if parts[1] != "claim" {
+		writeError(w, http.StatusNotFound, "route not found")
+		return
+	}
 	if !s.workerExists(workerID) {
 		writeError(w, http.StatusNotFound, "worker not registered")
 		return
@@ -198,27 +289,119 @@ func (s *Server) workerByID(w http.ResponseWriter, r *http.Request) {
 
 	current, ok := s.queue.Claim(workerID)
 	if !ok {
+		if err := s.persist(); err != nil {
+			writeError(w, http.StatusInternalServerError, err.Error())
+			return
+		}
 		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+	if err := s.persist(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, current)
 }
 
+func (s *Server) heartbeat(w http.ResponseWriter, workerID string) {
+	if !s.recordHeartbeat(workerID) {
+		writeError(w, http.StatusNotFound, "worker not registered")
+		return
+	}
+	if err := s.persist(); err != nil {
+		writeError(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
 func (s *Server) workerExists(id string) bool {
 	s.workersMu.Lock()
 	defer s.workersMu.Unlock()
-	_, exists := s.workers[id]
-	return exists
+	worker, exists := s.workers[id]
+	return exists && worker.Status == "healthy"
 }
 
-func (s *Server) touchWorker(id string) {
+func (s *Server) touchWorker(id string) bool {
 	s.workersMu.Lock()
 	defer s.workersMu.Unlock()
 	current, exists := s.workers[id]
-	if exists {
+	if exists && current.Status == "healthy" {
 		current.LastSeen = time.Now().UTC()
 		s.workers[id] = current
 	}
+	return exists && current.Status == "healthy"
+}
+
+func (s *Server) recordHeartbeat(id string) bool {
+	s.workersMu.Lock()
+	defer s.workersMu.Unlock()
+	current, exists := s.workers[id]
+	if !exists {
+		return false
+	}
+	current.LastSeen = time.Now().UTC()
+	current.Status = "healthy"
+	s.workers[id] = current
+	return true
+}
+
+func (s *Server) monitor(ctx context.Context) {
+	ticker := time.NewTicker(s.monitorInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case now := <-ticker.C:
+			s.recoverFailures(now.UTC())
+		}
+	}
+}
+
+func (s *Server) recoverFailures(now time.Time) {
+	changed := len(s.queue.Expire(now)) > 0
+	var lostWorkers []string
+
+	s.workersMu.Lock()
+	for id, worker := range s.workers {
+		if worker.Status != "healthy" || worker.LastSeen.IsZero() || now.Sub(worker.LastSeen) <= s.heartbeatTimeout {
+			continue
+		}
+		worker.Status = "dead"
+		s.workers[id] = worker
+		lostWorkers = append(lostWorkers, id)
+	}
+	s.workersMu.Unlock()
+
+	for _, workerID := range lostWorkers {
+		if len(s.queue.RecoverWorker(workerID)) > 0 {
+			changed = true
+		}
+	}
+	if len(lostWorkers) > 0 {
+		changed = true
+	}
+	if changed {
+		_ = s.persist()
+	}
+}
+
+func (s *Server) persist() error {
+	if s.store == nil {
+		return nil
+	}
+
+	s.workersMu.Lock()
+	workers := make([]api.Worker, 0, len(s.workers))
+	for _, worker := range s.workers {
+		workers = append(workers, worker)
+	}
+	s.workersMu.Unlock()
+	return s.store.Save(persistence.State{
+		Jobs:    s.queue.List(),
+		Workers: workers,
+	})
 }
 
 func writeQueueError(w http.ResponseWriter, err error) {

@@ -18,6 +18,19 @@ type Client struct {
 	HTTPClient *http.Client
 }
 
+type HTTPError struct {
+	StatusCode int
+	Status     string
+	Message    string
+}
+
+func (e *HTTPError) Error() string {
+	if e.Message == "" {
+		return fmt.Sprintf("server returned %s", e.Status)
+	}
+	return fmt.Sprintf("server returned %s: %s", e.Status, e.Message)
+}
+
 func New(baseURL string) *Client {
 	return &Client{
 		BaseURL:    strings.TrimRight(baseURL, "/"),
@@ -59,6 +72,10 @@ func (c *Client) RegisterWorker(id string) (*api.Worker, error) {
 	var result api.Worker
 	err := c.do(http.MethodPost, "/v1/workers/register", api.RegisterWorkerRequest{ID: id}, http.StatusOK, &result)
 	return &result, err
+}
+
+func (c *Client) Heartbeat(id string) error {
+	return c.do(http.MethodPost, "/v1/workers/"+id+"/heartbeat", nil, http.StatusOK, nil)
 }
 
 func (c *Client) ClaimJob(id string) (*job.Job, bool, error) {
@@ -135,7 +152,11 @@ func (c *Client) do(method, path string, body any, expectedStatus int, result an
 func (c *Client) responseError(response *http.Response) error {
 	var message api.ErrorResponse
 	if err := json.NewDecoder(response.Body).Decode(&message); err != nil {
-		return fmt.Errorf("server returned %s", response.Status)
+		return &HTTPError{StatusCode: response.StatusCode, Status: response.Status}
 	}
-	return fmt.Errorf("server returned %s: %s", response.Status, message.Error)
+	return &HTTPError{
+		StatusCode: response.StatusCode,
+		Status:     response.Status,
+		Message:    message.Error,
+	}
 }

@@ -2,7 +2,7 @@
 
 Relay is a distributed job queue and worker system written in Go.
 
-The server accepts command jobs over HTTP, stores them in an in-memory priority queue, and assigns them to independent workers. Workers execute the command payload on their host and report the result to the server.
+The server accepts command jobs over HTTP, stores them in a priority queue, and assigns them to independent workers. Workers execute the command payload on their host and report the result to the server.
 
 ## Current capabilities
 
@@ -10,9 +10,14 @@ The server accepts command jobs over HTTP, stores them in an in-memory priority 
 - prioritize queued jobs
 - inspect job status, output, and errors
 - cancel queued jobs or mark running jobs cancelled
+- retry failed jobs with configurable limits and exponential backoff
+- enforce execution timeouts
 - register multiple workers
+- monitor worker heartbeats and recover jobs from failed workers
 - distribute jobs across concurrent workers
 - execute command payloads using the host operating system's shell
+- persist job and worker state to a JSON file
+- recover unfinished jobs after a server restart
 - protect shared queue state with synchronization
 - verify queue and worker behavior with unit, integration, and race tests
 
@@ -25,7 +30,7 @@ client or CLI
 HTTP server
       |
       v
-in-memory priority queue
+priority queue and state store
       |
       +------------+------------+
       v            v            v
@@ -37,6 +42,7 @@ Jobs move through these states:
 ```text
 queued -> running -> completed
                  \-> failed
+running -> queued (retry)
 queued or running -> cancelled
 ```
 
@@ -50,6 +56,8 @@ Start the server:
 go run ./cmd/relay server
 ```
 
+The server persists state to `relay-state.json` by default. Use `--data ""` to run without persistence.
+
 Start one or more workers in separate terminals:
 
 ```bash
@@ -60,7 +68,7 @@ go run ./cmd/relay worker --id worker-2
 Submit a command:
 
 ```bash
-go run ./cmd/relay submit "echo hello"
+go run ./cmd/relay submit --max-retries 3 --timeout 30s "echo hello"
 ```
 
 Inspect jobs and workers:
@@ -84,7 +92,9 @@ The server listens on `127.0.0.1:8080` by default. Use `--server` with client an
 ### Start the server
 
 ```text
-relay server [--listen address]
+relay server [--listen address] [--data path] [--heartbeat-timeout duration]
+             [--monitor-interval duration] [--retry-base-delay duration]
+             [--retry-max-delay duration]
 ```
 
 ### Start a worker
@@ -98,10 +108,13 @@ The default worker ID combines the host name and process ID. Set `--id` when run
 ### Submit a job
 
 ```text
-relay submit [--server url] [--type type] [--priority number] command
+relay submit [--server url] [--type type] [--priority number]
+             [--max-retries number] [--timeout duration] command
 ```
 
 The command can contain spaces when passed as one quoted argument. The command's combined standard output and standard error are returned as the job result.
+
+`--max-retries` controls how many additional attempts are allowed after the initial attempt. `--timeout` accepts Go duration strings such as `30s` or `2m`.
 
 ### Inspect and cancel jobs
 
@@ -120,6 +133,7 @@ relay workers [--server url]
 - `GET /v1/jobs/{id}` returns one job
 - `POST /v1/jobs/{id}/cancel` cancels a job
 - `POST /v1/workers/register` registers a worker
+- `POST /v1/workers/{id}/heartbeat` records worker health
 - `GET /v1/workers` lists workers
 - `POST /v1/workers/{id}/claim` claims the next queued job
 - `POST /v1/jobs/{id}/result` reports a worker result
@@ -130,7 +144,9 @@ Create a job:
 {
   "type": "command",
   "payload": "echo hello",
-  "priority": 1
+  "priority": 1,
+  "max_retries": 3,
+  "timeout": "30s"
 }
 ```
 
@@ -146,10 +162,13 @@ Report a successful result:
 
 ## Operational boundaries
 
-- job state is held in server memory and is lost when the server stops
+- state is persisted to a local JSON file by default; the file is replaced after successful state snapshots
+- jobs that were running during a server restart are returned to the queue and may execute again
+- failures between execution and acknowledgement can result in duplicate execution
 - workers execute submitted commands with the permissions of their local process
 - cancelling a running job changes its recorded state but does not interrupt the command already running on the worker
-- the current worker loop polls the server when no job is available
+- workers send periodic heartbeats while they are running
+- retry and timeout settings are applied by the server and worker together
 
 Only submit commands that are trusted to run on the worker host.
 

@@ -13,18 +13,21 @@ const (
 )
 
 type Job struct {
-	ID          string     `json:"id"`
-	Type        string     `json:"type"`
-	Payload     string     `json:"payload"`
-	Priority    int        `json:"priority"`
-	Status      Status     `json:"status"`
-	CreatedAt   time.Time  `json:"created_at"`
-	StartedAt   *time.Time `json:"started_at,omitempty"`
-	CompletedAt *time.Time `json:"completed_at,omitempty"`
-	Attempts    int        `json:"attempts"`
-	WorkerID    string     `json:"worker_id,omitempty"`
-	Result      string     `json:"result,omitempty"`
-	Error       string     `json:"error,omitempty"`
+	ID            string     `json:"id"`
+	Type          string     `json:"type"`
+	Payload       string     `json:"payload"`
+	Priority      int        `json:"priority"`
+	Status        Status     `json:"status"`
+	CreatedAt     time.Time  `json:"created_at"`
+	StartedAt     *time.Time `json:"started_at,omitempty"`
+	CompletedAt   *time.Time `json:"completed_at,omitempty"`
+	Attempts      int        `json:"attempts"`
+	MaxRetries    int        `json:"max_retries"`
+	Timeout       string     `json:"timeout,omitempty"`
+	NextAttemptAt *time.Time `json:"next_attempt_at,omitempty"`
+	WorkerID      string     `json:"worker_id,omitempty"`
+	Result        string     `json:"result,omitempty"`
+	Error         string     `json:"error,omitempty"`
 }
 
 func New(id, jobType, payload string, priority int, createdAt time.Time) *Job {
@@ -51,6 +54,10 @@ func (j *Job) Clone() *Job {
 	if j.CompletedAt != nil {
 		completedAt := *j.CompletedAt
 		clone.CompletedAt = &completedAt
+	}
+	if j.NextAttemptAt != nil {
+		nextAttemptAt := *j.NextAttemptAt
+		clone.NextAttemptAt = &nextAttemptAt
 	}
 	return &clone
 }

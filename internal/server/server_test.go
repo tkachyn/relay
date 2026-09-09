@@ -1,8 +1,11 @@
 package server
 
 import (
+	"context"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/tkachyn/relay/internal/api"
 	"github.com/tkachyn/relay/internal/client"
@@ -76,4 +79,109 @@ func TestClaimReturnsEmptyWhenNoJobsAreAvailable(t *testing.T) {
 	if found {
 		t.Fatal("found a job in an empty queue")
 	}
+}
+
+func TestServerRestoresJobsAndWorkers(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "relay-state.json")
+	first, err := NewWithOptions(Options{StoragePath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	firstServer := httptest.NewServer(first.Handler())
+	firstClient := client.New(firstServer.URL)
+
+	if _, err := firstClient.RegisterWorker("worker-1"); err != nil {
+		t.Fatal(err)
+	}
+	created, err := firstClient.Submit(api.CreateJobRequest{
+		Type:       "command",
+		Payload:    "echo recover",
+		MaxRetries: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := firstClient.ClaimJob("worker-1"); err != nil || !found {
+		t.Fatalf("claim failed: found=%v err=%v", found, err)
+	}
+	firstServer.Close()
+
+	second, err := NewWithOptions(Options{StoragePath: path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	secondServer := httptest.NewServer(second.Handler())
+	defer secondServer.Close()
+	secondClient := client.New(secondServer.URL)
+
+	restored, err := secondClient.GetJob(created.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if restored.Status != job.StatusQueued || restored.WorkerID != "" {
+		t.Fatalf("unexpected restored job: %+v", restored)
+	}
+	workers, err := secondClient.ListWorkers()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(workers) != 1 || workers[0].Status != "dead" {
+		t.Fatalf("unexpected restored workers: %+v", workers)
+	}
+}
+
+func TestServerRecoversJobsFromDeadWorker(t *testing.T) {
+	testServer := NewWithOptionsOrFail(t, Options{
+		HeartbeatTimeout: 15 * time.Millisecond,
+		MonitorInterval:  5 * time.Millisecond,
+		RetryBaseDelay:   time.Millisecond,
+		RetryMaxDelay:    time.Millisecond,
+	})
+	httpServer := httptest.NewServer(testServer.Handler())
+	defer httpServer.Close()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	testServer.Start(ctx)
+	apiClient := client.New(httpServer.URL)
+
+	if _, err := apiClient.RegisterWorker("worker-1"); err != nil {
+		t.Fatal(err)
+	}
+	created, err := apiClient.Submit(api.CreateJobRequest{
+		Type:       "command",
+		Payload:    "echo recover",
+		MaxRetries: 1,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, found, err := apiClient.ClaimJob("worker-1"); err != nil || !found {
+		t.Fatalf("claim failed: found=%v err=%v", found, err)
+	}
+
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		current, err := apiClient.GetJob(created.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		workers, err := apiClient.ListWorkers()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if current.Status == job.StatusQueued && len(workers) == 1 && workers[0].Status == "dead" {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+	t.Fatal("worker failure was not recovered")
+}
+
+func NewWithOptionsOrFail(t *testing.T, options Options) *Server {
+	t.Helper()
+	server, err := NewWithOptions(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return server
 }

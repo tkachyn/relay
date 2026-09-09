@@ -7,9 +7,11 @@ import (
 )
 
 type CreateJobRequest struct {
-	Type     string `json:"type"`
-	Payload  string `json:"payload"`
-	Priority int    `json:"priority"`
+	Type       string `json:"type"`
+	Payload    string `json:"payload"`
+	Priority   int    `json:"priority"`
+	MaxRetries int    `json:"max_retries"`
+	Timeout    string `json:"timeout"`
 }
 
 type RegisterWorkerRequest struct {
@@ -27,6 +29,7 @@ type Worker struct {
 	ID           string    `json:"id"`
 	RegisteredAt time.Time `json:"registered_at"`
 	LastSeen     time.Time `json:"last_seen"`
+	Status       string    `json:"status"`
 }
 
 type JobListResponse struct {

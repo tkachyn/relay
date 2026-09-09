@@ -54,22 +54,38 @@ func main() {
 func runServer(args []string) error {
 	flags := flag.NewFlagSet("server", flag.ContinueOnError)
 	listen := flags.String("listen", "127.0.0.1:8080", "address to listen on")
+	dataPath := flags.String("data", "relay-state.json", "path to the persistent state file; empty disables persistence")
+	heartbeatTimeout := flags.Duration("heartbeat-timeout", 10*time.Second, "time before an unresponsive worker is considered dead")
+	monitorInterval := flags.Duration("monitor-interval", time.Second, "interval for timeout and worker failure checks")
+	retryBaseDelay := flags.Duration("retry-base-delay", time.Second, "initial retry delay")
+	retryMaxDelay := flags.Duration("retry-max-delay", time.Minute, "maximum retry delay")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 
+	relayServer, err := server.NewWithOptions(server.Options{
+		StoragePath:      *dataPath,
+		HeartbeatTimeout: *heartbeatTimeout,
+		MonitorInterval:  *monitorInterval,
+		RetryBaseDelay:   *retryBaseDelay,
+		RetryMaxDelay:    *retryMaxDelay,
+	})
+	if err != nil {
+		return fmt.Errorf("load server state: %w", err)
+	}
 	httpServer := &http.Server{
 		Addr:    *listen,
-		Handler: server.New().Handler(),
+		Handler: relayServer.Handler(),
 	}
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	relayServer.Start(ctx)
 	go func() {
 		<-ctx.Done()
 		_ = httpServer.Shutdown(context.Background())
 	}()
 
-	err := httpServer.ListenAndServe()
+	err = httpServer.ListenAndServe()
 	if errors.Is(err, http.ErrServerClosed) {
 		return nil
 	}
@@ -95,6 +111,8 @@ func runSubmit(args []string) error {
 	serverURL := flags.String("server", "http://127.0.0.1:8080", "relay server URL")
 	jobType := flags.String("type", "command", "job type")
 	priority := flags.Int("priority", 0, "job priority")
+	maxRetries := flags.Int("max-retries", 0, "maximum number of retries after a failure")
+	timeout := flags.String("timeout", "", "maximum execution duration, such as 30s")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
@@ -103,9 +121,11 @@ func runSubmit(args []string) error {
 	}
 
 	current, err := client.New(*serverURL).Submit(api.CreateJobRequest{
-		Type:     *jobType,
-		Payload:  strings.Join(flags.Args(), " "),
-		Priority: *priority,
+		Type:       *jobType,
+		Payload:    strings.Join(flags.Args(), " "),
+		Priority:   *priority,
+		MaxRetries: *maxRetries,
+		Timeout:    *timeout,
 	})
 	if err != nil {
 		return err

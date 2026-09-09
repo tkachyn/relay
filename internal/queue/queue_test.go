@@ -74,3 +74,73 @@ func TestCancelRemovesQueuedJobFromClaims(t *testing.T) {
 		t.Fatalf("got status %s, expected %s", current.Status, job.StatusCancelled)
 	}
 }
+
+func TestFailRetriesWithBackoffUntilLimit(t *testing.T) {
+	q := NewWithOptions(Options{
+		RetryBaseDelay: 2 * time.Millisecond,
+		RetryMaxDelay:  8 * time.Millisecond,
+	})
+	retryJob := job.New("retry", "command", "echo retry", 0, time.Now().UTC())
+	retryJob.MaxRetries = 2
+	if err := q.Enqueue(retryJob); err != nil {
+		t.Fatal(err)
+	}
+
+	for attempt := 1; attempt <= 3; attempt++ {
+		current, ok := q.Claim("worker-1")
+		if !ok {
+			t.Fatalf("expected attempt %d", attempt)
+		}
+		if current.Attempts != attempt {
+			t.Fatalf("got attempt %d, expected %d", current.Attempts, attempt)
+		}
+		failed, err := q.Fail(current.ID, "worker-1", "", "failed")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if attempt < 3 {
+			if failed.Status != job.StatusQueued || failed.NextAttemptAt == nil {
+				t.Fatalf("expected retry state: %+v", failed)
+			}
+			time.Sleep(10 * time.Millisecond)
+			continue
+		}
+		if failed.Status != job.StatusFailed || failed.NextAttemptAt != nil {
+			t.Fatalf("expected terminal failure: %+v", failed)
+		}
+	}
+}
+
+func TestExpireRetriesTimedOutJob(t *testing.T) {
+	q := NewWithOptions(Options{RetryBaseDelay: time.Millisecond, RetryMaxDelay: time.Millisecond})
+	timeoutJob := job.New("timeout", "command", "sleep", 0, time.Now().UTC())
+	timeoutJob.Timeout = "1ms"
+	if err := q.Enqueue(timeoutJob); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := q.Claim("worker-1"); !ok {
+		t.Fatal("expected job to be claimed")
+	}
+	time.Sleep(5 * time.Millisecond)
+	expired := q.Expire(time.Now().UTC())
+	if len(expired) != 1 || expired[0].Status != job.StatusFailed {
+		t.Fatalf("unexpected expired jobs: %+v", expired)
+	}
+}
+
+func TestRestoreRequeuesRunningJobs(t *testing.T) {
+	q := New()
+	running := job.New("running", "command", "echo running", 0, time.Now().UTC())
+	running.Status = job.StatusRunning
+	running.WorkerID = "worker-1"
+	if err := q.Restore([]*job.Job{running}); err != nil {
+		t.Fatal(err)
+	}
+	current, ok := q.Claim("worker-2")
+	if !ok {
+		t.Fatal("expected restored job to be queued")
+	}
+	if current.Status != job.StatusRunning || current.WorkerID != "worker-2" {
+		t.Fatalf("unexpected restored job: %+v", current)
+	}
+}

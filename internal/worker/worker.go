@@ -2,6 +2,7 @@ package worker
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -14,16 +15,18 @@ import (
 )
 
 type Worker struct {
-	ID         string
-	Client     *client.Client
-	PollPeriod time.Duration
+	ID              string
+	Client          *client.Client
+	PollPeriod      time.Duration
+	HeartbeatPeriod time.Duration
 }
 
 func New(id, serverURL string, pollPeriod time.Duration) *Worker {
 	return &Worker{
-		ID:         id,
-		Client:     client.New(serverURL),
-		PollPeriod: pollPeriod,
+		ID:              id,
+		Client:          client.New(serverURL),
+		PollPeriod:      pollPeriod,
+		HeartbeatPeriod: time.Second,
 	}
 }
 
@@ -39,6 +42,13 @@ func (w *Worker) Run(ctx context.Context) error {
 	if _, err := w.Client.RegisterWorker(w.ID); err != nil {
 		return fmt.Errorf("register worker: %w", err)
 	}
+	heartbeatCtx, stopHeartbeat := context.WithCancel(ctx)
+	heartbeatDone := make(chan struct{})
+	go w.heartbeatLoop(heartbeatCtx, heartbeatDone)
+	defer func() {
+		stopHeartbeat()
+		<-heartbeatDone
+	}()
 
 	for {
 		select {
@@ -58,7 +68,17 @@ func (w *Worker) Run(ctx context.Context) error {
 			continue
 		}
 
-		result, runErr := execute(ctx, current.Payload)
+		jobContext, cancel := context.WithCancel(ctx)
+		if current.Timeout != "" {
+			timeout, parseErr := time.ParseDuration(current.Timeout)
+			if parseErr != nil {
+				cancel()
+				return fmt.Errorf("parse timeout for %s: %w", current.ID, parseErr)
+			}
+			jobContext, cancel = context.WithTimeout(ctx, timeout)
+		}
+		result, runErr := execute(jobContext, current.Payload)
+		cancel()
 		request := api.ResultRequest{
 			WorkerID: w.ID,
 			Success:  runErr == nil,
@@ -68,7 +88,30 @@ func (w *Worker) Run(ctx context.Context) error {
 			request.Error = runErr.Error()
 		}
 		if _, err := w.Client.ReportResult(current.ID, request); err != nil {
+			var responseErr *client.HTTPError
+			if errors.As(err, &responseErr) &&
+				(responseErr.StatusCode == 404 || responseErr.StatusCode == 409) {
+				continue
+			}
 			return fmt.Errorf("report result for %s: %w", current.ID, err)
+		}
+	}
+}
+
+func (w *Worker) heartbeatLoop(ctx context.Context, done chan<- struct{}) {
+	defer close(done)
+	heartbeatPeriod := w.HeartbeatPeriod
+	if heartbeatPeriod <= 0 {
+		heartbeatPeriod = time.Second
+	}
+	ticker := time.NewTicker(heartbeatPeriod)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			_ = w.Client.Heartbeat(w.ID)
 		}
 	}
 }
