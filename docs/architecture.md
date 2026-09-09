@@ -1,7 +1,5 @@
 # Relay architecture
 
-<img src="logo.png" alt="Relay logo" width="120">
-
 Relay separates job submission, scheduling, execution, and state storage.
 
 ```mermaid

@@ -1,7 +1,5 @@
 # Relay persistence
 
-<img src="logo.png" alt="Relay logo" width="120">
-
 Relay persists the complete server state as one JSON document. The default path is `relay-state.json`; pass `--data ""` to disable persistence.
 
 ## Snapshot contents

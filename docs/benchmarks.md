@@ -1,7 +1,5 @@
 # Relay benchmarks
 
-<img src="logo.png" alt="Relay logo" width="120">
-
 Relay includes repeatable Go benchmarks and a concurrent HTTP load generator. Results depend on the machine, Go version, filesystem, command payload, and server configuration, so this document describes the procedure rather than claiming a universal performance number.
 
 ## Queue and persistence benchmarks

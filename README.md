@@ -1,8 +1,8 @@
-# Relay
-
 <p align="center">
   <img src="docs/logo.png" alt="Relay logo" width="180">
 </p>
+
+# Relay
 
 Relay is a distributed job queue and worker system written in Go.
 
