@@ -17,6 +17,7 @@ import (
 	"github.com/tkachyn/relay/internal/queue"
 )
 
+// server coordinates queue transitions, worker liveness, and persistence
 type Server struct {
 	queue            *queue.Queue
 	workersMu        sync.Mutex
@@ -27,6 +28,7 @@ type Server struct {
 	monitorInterval  time.Duration
 }
 
+// options controls recovery timing and the on-disk state location
 type Options struct {
 	StoragePath      string
 	HeartbeatTimeout time.Duration
@@ -35,6 +37,7 @@ type Options struct {
 	RetryMaxDelay    time.Duration
 }
 
+// new creates an in-memory server with default recovery settings
 func New() *Server {
 	server, err := NewWithOptions(Options{})
 	if err != nil {
@@ -43,6 +46,7 @@ func New() *Server {
 	return server
 }
 
+// new with options loads persisted state before serving requests
 func NewWithOptions(options Options) (*Server, error) {
 	if options.HeartbeatTimeout <= 0 {
 		options.HeartbeatTimeout = 10 * time.Second
@@ -76,6 +80,7 @@ func NewWithOptions(options Options) (*Server, error) {
 	return server, nil
 }
 
+// start begins timeout and heartbeat monitoring until the context ends
 func (s *Server) Start(ctx context.Context) {
 	go s.monitor(ctx)
 }
@@ -359,6 +364,7 @@ func (s *Server) monitor(ctx context.Context) {
 	}
 }
 
+// recover failures converts expired attempts and dead workers into retries
 func (s *Server) recoverFailures(now time.Time) {
 	changed := len(s.queue.Expire(now)) > 0
 	var lostWorkers []string
@@ -387,6 +393,7 @@ func (s *Server) recoverFailures(now time.Time) {
 	}
 }
 
+// persist saves jobs and workers as one state snapshot
 func (s *Server) persist() error {
 	if s.store == nil {
 		return nil

@@ -10,19 +10,23 @@ import (
 	"github.com/tkachyn/relay/internal/job"
 )
 
+// state is the complete snapshot needed to restart a server
 type State struct {
 	Jobs    []*job.Job   `json:"jobs"`
 	Workers []api.Worker `json:"workers"`
 }
 
+// store writes snapshots beside the target before replacing it
 type Store struct {
 	path string
 }
 
+// new creates a file-backed state store
 func New(path string) *Store {
 	return &Store{path: path}
 }
 
+// load reads the last complete snapshot or returns an empty state
 func (s *Store) Load() (State, error) {
 	file, err := os.Open(s.path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -40,6 +44,7 @@ func (s *Store) Load() (State, error) {
 	return state, nil
 }
 
+// save flushes a complete snapshot before replacing the previous file
 func (s *Store) Save(state State) error {
 	dir := filepath.Dir(s.path)
 	temp, err := os.CreateTemp(dir, ".relay-state-*.tmp")

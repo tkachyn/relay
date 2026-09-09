@@ -2,6 +2,7 @@ package job
 
 import "time"
 
+// status identifies a job's position in its lifecycle
 type Status string
 
 const (
@@ -12,6 +13,7 @@ const (
 	StatusCancelled Status = "cancelled"
 )
 
+// job contains the durable metadata needed to schedule and recover work
 type Job struct {
 	ID            string     `json:"id"`
 	Type          string     `json:"type"`
@@ -30,6 +32,7 @@ type Job struct {
 	Error         string     `json:"error,omitempty"`
 }
 
+// new creates a queued job with its initial scheduling metadata
 func New(id, jobType, payload string, priority int, createdAt time.Time) *Job {
 	return &Job{
 		ID:        id,
@@ -41,6 +44,7 @@ func New(id, jobType, payload string, priority int, createdAt time.Time) *Job {
 	}
 }
 
+// clone prevents callers from modifying queue-owned timestamps and state
 func (j *Job) Clone() *Job {
 	if j == nil {
 		return nil

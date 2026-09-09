@@ -13,11 +13,13 @@ import (
 	"github.com/tkachyn/relay/internal/job"
 )
 
+// client provides the HTTP operations used by commands and workers
 type Client struct {
 	BaseURL    string
 	HTTPClient *http.Client
 }
 
+// http error preserves the response status so callers can handle conflicts
 type HTTPError struct {
 	StatusCode int
 	Status     string
@@ -31,6 +33,7 @@ func (e *HTTPError) Error() string {
 	return fmt.Sprintf("server returned %s: %s", e.Status, e.Message)
 }
 
+// new creates a client for one relay server
 func New(baseURL string) *Client {
 	return &Client{
 		BaseURL:    strings.TrimRight(baseURL, "/"),
@@ -78,6 +81,7 @@ func (c *Client) Heartbeat(id string) error {
 	return c.do(http.MethodPost, "/v1/workers/"+id+"/heartbeat", nil, http.StatusOK, nil)
 }
 
+// claim job distinguishes an empty queue from a failed request
 func (c *Client) ClaimJob(id string) (*job.Job, bool, error) {
 	request, err := http.NewRequest(http.MethodPost, c.BaseURL+"/v1/workers/"+id+"/claim", nil)
 	if err != nil {

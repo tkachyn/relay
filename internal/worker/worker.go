@@ -14,6 +14,7 @@ import (
 	"github.com/tkachyn/relay/internal/client"
 )
 
+// worker polls for work while a separate loop keeps its registration alive
 type Worker struct {
 	ID              string
 	Client          *client.Client
@@ -21,6 +22,7 @@ type Worker struct {
 	HeartbeatPeriod time.Duration
 }
 
+// new creates a worker client with a one-second heartbeat by default
 func New(id, serverURL string, pollPeriod time.Duration) *Worker {
 	return &Worker{
 		ID:              id,
@@ -30,6 +32,7 @@ func New(id, serverURL string, pollPeriod time.Duration) *Worker {
 	}
 }
 
+// default id builds a stable local worker identifier
 func DefaultID() string {
 	hostname, err := os.Hostname()
 	if err != nil || hostname == "" {
@@ -38,6 +41,7 @@ func DefaultID() string {
 	return fmt.Sprintf("%s-%d", hostname, os.Getpid())
 }
 
+// run claims, executes, and reports jobs until the context is cancelled
 func (w *Worker) Run(ctx context.Context) error {
 	if _, err := w.Client.RegisterWorker(w.ID); err != nil {
 		return fmt.Errorf("register worker: %w", err)
@@ -98,6 +102,7 @@ func (w *Worker) Run(ctx context.Context) error {
 	}
 }
 
+// heartbeat loop lets the server distinguish a live worker from a lost one
 func (w *Worker) heartbeatLoop(ctx context.Context, done chan<- struct{}) {
 	defer close(done)
 	heartbeatPeriod := w.HeartbeatPeriod
@@ -116,6 +121,7 @@ func (w *Worker) heartbeatLoop(ctx context.Context, done chan<- struct{}) {
 	}
 }
 
+// execute runs the submitted command through the host operating system shell
 func execute(ctx context.Context, command string) (string, error) {
 	var commandLine *exec.Cmd
 	if runtime.GOOS == "windows" {

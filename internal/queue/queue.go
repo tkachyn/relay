@@ -15,6 +15,7 @@ var (
 	ErrInvalidTransition = errors.New("invalid job transition")
 )
 
+// queue owns job state and serializes transitions between workers
 type Queue struct {
 	mu             sync.Mutex
 	jobs           map[string]*job.Job
@@ -23,11 +24,13 @@ type Queue struct {
 	retryMaxDelay  time.Duration
 }
 
+// options controls retry timing without changing job retry limits
 type Options struct {
 	RetryBaseDelay time.Duration
 	RetryMaxDelay  time.Duration
 }
 
+// new creates a queue with bounded exponential retry delays
 func New() *Queue {
 	return NewWithOptions(Options{
 		RetryBaseDelay: time.Second,
@@ -35,6 +38,7 @@ func New() *Queue {
 	})
 }
 
+// new with options is used by tests and deployments that need custom timing
 func NewWithOptions(options Options) *Queue {
 	if options.RetryBaseDelay <= 0 {
 		options.RetryBaseDelay = time.Second
@@ -49,6 +53,7 @@ func NewWithOptions(options Options) *Queue {
 	}
 }
 
+// enqueue adds a new job to the durable state and ready queue
 func (q *Queue) Enqueue(newJob *job.Job) error {
 	if newJob == nil || newJob.ID == "" {
 		return errors.New("job must have an id")
@@ -68,6 +73,7 @@ func (q *Queue) Enqueue(newJob *job.Job) error {
 	return nil
 }
 
+// restore requeues work that was running when the previous server stopped
 func (q *Queue) Restore(jobs []*job.Job) error {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -92,6 +98,7 @@ func (q *Queue) Restore(jobs []*job.Job) error {
 	return nil
 }
 
+// claim atomically assigns the highest-priority ready job to a worker
 func (q *Queue) Claim(workerID string) (*job.Job, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -124,6 +131,7 @@ func (q *Queue) Claim(workerID string) (*job.Job, bool) {
 	return stored.Clone(), true
 }
 
+// fail either schedules a retry or records a terminal failure
 func (q *Queue) Fail(id, workerID, result, failure string) (*job.Job, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -139,6 +147,7 @@ func (q *Queue) Fail(id, workerID, result, failure string) (*job.Job, error) {
 	return stored.Clone(), nil
 }
 
+// complete accepts a result only from the worker that owns the attempt
 func (q *Queue) Complete(id, workerID, result string) (*job.Job, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -160,6 +169,7 @@ func (q *Queue) Complete(id, workerID, result string) (*job.Job, error) {
 	return stored.Clone(), nil
 }
 
+// expire moves timed-out attempts through the same retry path as failures
 func (q *Queue) Expire(now time.Time) []*job.Job {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -179,6 +189,7 @@ func (q *Queue) Expire(now time.Time) []*job.Job {
 	return expired
 }
 
+// recover worker returns its unfinished jobs after heartbeat loss
 func (q *Queue) RecoverWorker(workerID string) []*job.Job {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -234,6 +245,7 @@ func (q *Queue) pushLocked(stored *job.Job) {
 	})
 }
 
+// cancel marks queued or running work so it cannot be claimed again
 func (q *Queue) Cancel(id string) (*job.Job, error) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
