@@ -8,8 +8,10 @@ const elements = {
   jobs: document.querySelector("#jobs"),
   workers: document.querySelector("#workers"),
   lastUpdated: document.querySelector("#last-updated"),
-  historyPanel: document.querySelector("#history-panel"),
+  historyModal: document.querySelector("#history-modal"),
   historyTitle: document.querySelector("#history-title"),
+  historyCommand: document.querySelector("#history-command"),
+  historyResult: document.querySelector("#history-result"),
   history: document.querySelector("#history"),
 };
 
@@ -34,14 +36,27 @@ function cell(value) {
   return element;
 }
 
+function statusBadge(status) {
+  const badge = document.createElement("span");
+  badge.className = `status-badge status-${status}`;
+  badge.textContent = status;
+  return badge;
+}
+
+function statusCell(status) {
+  const element = document.createElement("td");
+  element.append(statusBadge(status));
+  return element;
+}
+
 function renderJobs(jobs) {
   elements.jobs.replaceChildren();
   for (const job of jobs) {
     const row = document.createElement("tr");
     row.append(
       cell(job.id),
-      cell(job.type),
-      cell(job.status),
+      commandCell(job.payload),
+      statusCell(job.status),
       cell(String(job.priority)),
       cell(String(job.attempts)),
       cell(job.worker_id || "—"),
@@ -49,8 +64,8 @@ function renderJobs(jobs) {
 
     const actions = document.createElement("td");
     const historyButton = document.createElement("button");
-    historyButton.className = "button link";
-    historyButton.textContent = "History";
+    historyButton.className = "button secondary";
+    historyButton.textContent = "View history";
     historyButton.addEventListener("click", () => showHistory(job.id));
     actions.append(historyButton);
 
@@ -72,12 +87,19 @@ function renderWorkers(workers) {
     const row = document.createElement("tr");
     row.append(
       cell(worker.id),
-      cell(worker.status),
-      cell(formatTime(worker.registered_at)),
+      statusCell(worker.status),
       cell(formatTime(worker.last_seen)),
     );
     elements.workers.append(row);
   }
+}
+
+function commandCell(command) {
+  const element = document.createElement("td");
+  element.className = "command-cell";
+  element.title = command;
+  element.textContent = command;
+  return element;
 }
 
 function renderMetrics(values) {
@@ -129,19 +151,81 @@ async function cancelJob(id) {
 }
 
 async function showHistory(id) {
+  elements.historyTitle.textContent = `Job history: ${id}`;
+  elements.historyCommand.textContent = "Loading…";
+  elements.historyResult.textContent = "Loading…";
+  elements.history.replaceChildren();
+  const loading = document.createElement("p");
+  loading.className = "muted";
+  loading.textContent = "Loading history…";
+  elements.history.append(loading);
+  elements.historyModal.showModal();
   try {
-    const history = await fetchJSON(`/v1/jobs/${encodeURIComponent(id)}/history`);
-    elements.historyTitle.textContent = `Job history: ${id}`;
-    elements.history.textContent = JSON.stringify(history.events, null, 2);
-    elements.historyPanel.classList.remove("hidden");
+    const [job, history] = await Promise.all([
+      fetchJSON(`/v1/jobs/${encodeURIComponent(id)}`),
+      fetchJSON(`/v1/jobs/${encodeURIComponent(id)}/history`),
+    ]);
+    elements.historyCommand.textContent = job.payload || "—";
+    elements.historyResult.textContent = job.error || job.result || "—";
+    renderHistory(history.events);
   } catch (error) {
+    elements.historyCommand.textContent = "Unavailable";
+    elements.historyResult.textContent = "Unavailable";
+    elements.history.replaceChildren();
+    const message = document.createElement("p");
+    message.className = "error-message";
+    message.textContent = `Unable to load history: ${error.message}`;
+    elements.history.append(message);
     elements.lastUpdated.textContent = `error: ${error.message}`;
   }
 }
 
+function renderHistory(events) {
+  elements.history.replaceChildren();
+  if (events.length === 0) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    empty.textContent = "No history recorded";
+    elements.history.append(empty);
+    return;
+  }
+
+  const timeline = document.createElement("ol");
+  timeline.className = "timeline-list";
+  for (const event of events) {
+    const item = document.createElement("li");
+    const heading = document.createElement("div");
+    heading.className = "timeline-heading";
+    const eventType = document.createElement("strong");
+    eventType.className = "timeline-type";
+    eventType.textContent = event.type;
+    heading.append(statusBadge(event.status), eventType);
+    const time = document.createElement("time");
+    time.dateTime = event.at;
+    time.textContent = formatTime(event.at);
+    heading.append(time);
+    const message = document.createElement("p");
+    message.textContent = event.message || "No additional details";
+    item.append(heading, message);
+    if (event.worker_id) {
+      const worker = document.createElement("span");
+      worker.className = "timeline-worker";
+      worker.textContent = `Worker: ${event.worker_id}`;
+      item.append(worker);
+    }
+    timeline.append(item);
+  }
+  elements.history.append(timeline);
+}
+
 document.querySelector("#refresh").addEventListener("click", refresh);
 document.querySelector("#close-history").addEventListener("click", () => {
-  elements.historyPanel.classList.add("hidden");
+  elements.historyModal.close();
+});
+elements.historyModal.addEventListener("click", (event) => {
+  if (event.target === elements.historyModal) {
+    elements.historyModal.close();
+  }
 });
 refresh();
 setInterval(refresh, 2000);

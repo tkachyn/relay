@@ -1,5 +1,9 @@
 # Relay
 
+<p align="center">
+  <img src="docs/logo.png" alt="Relay logo" width="180">
+</p>
+
 Relay is a distributed job queue and worker system written in Go.
 
 The server accepts command jobs over HTTP, stores them in a priority queue, and assigns them to independent workers. Workers execute the command payload on their host and report the result to the server.
@@ -100,6 +104,12 @@ go run ./cmd/relay cancel <id>
 Open the dashboard at `http://127.0.0.1:8080/dashboard/`.
 
 The server listens on `127.0.0.1:8080` by default. Use `--server` with client and worker commands when the server uses another address.
+
+### Dashboard
+
+The embedded dashboard provides a compact view of queue health, recent jobs, workers, metrics, command payloads, results, and job history.
+
+![Relay dashboard](docs/dashboard.png)
 
 ## Command line interface
 

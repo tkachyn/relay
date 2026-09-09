@@ -3,16 +3,26 @@
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#050607">
+    <meta name="description" content="Relay job queue operations dashboard">
+    <meta property="og:title" content="Relay Dashboard">
+    <meta property="og:description" content="Relay job queue operations dashboard">
+    <meta property="og:image" content="/dashboard/logo.png">
     <title>Relay Dashboard</title>
+    <link rel="icon" type="image/png" href="/dashboard/logo.png">
+    <link rel="apple-touch-icon" href="/dashboard/logo.png">
     <link rel="stylesheet" href="/dashboard/style.css">
   </head>
   <body>
     <main class="shell">
       <header class="hero">
-        <div>
-          <p class="eyebrow">relay</p>
+        <div class="brand">
+          <img class="brand-mark" src="/dashboard/logo.png" alt="Relay logo">
+          <div>
+            <p class="eyebrow">relay</p>
           <h1>Job operations</h1>
           <p class="muted">Live view of queue state, workers, and execution history</p>
+          </div>
         </div>
         <span id="last-updated" class="pill">loading</span>
       </header>
@@ -35,50 +45,64 @@
         <div id="metrics-cards" class="metrics-grid"></div>
       </section>
 
-      <section class="panel">
-        <div class="panel-heading">
-          <div>
-            <p class="eyebrow">queue</p>
-            <h2>Recent jobs</h2>
+      <div class="content-grid">
+        <section class="panel jobs-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">queue</p>
+              <h2>Recent jobs</h2>
+            </div>
+            <button id="refresh" class="button secondary">Refresh</button>
           </div>
-          <button id="refresh" class="button secondary">Refresh</button>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr><th>ID</th><th>Type</th><th>Status</th><th>Priority</th><th>Attempts</th><th>Worker</th><th>Actions</th></tr>
-            </thead>
-            <tbody id="jobs"></tbody>
-          </table>
-        </div>
-      </section>
-
-      <section class="panel">
-        <div class="panel-heading">
-          <div>
-            <p class="eyebrow">cluster</p>
-            <h2>Workers</h2>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>ID</th><th>Command</th><th>Status</th><th>Priority</th><th>Attempts</th><th>Worker</th><th>Actions</th></tr>
+              </thead>
+              <tbody id="jobs"></tbody>
+            </table>
           </div>
-        </div>
-        <div class="table-wrap">
-          <table>
-            <thead><tr><th>ID</th><th>Status</th><th>Registered</th><th>Last seen</th></tr></thead>
-            <tbody id="workers"></tbody>
-          </table>
-        </div>
-      </section>
+        </section>
 
-      <section id="history-panel" class="panel hidden">
-        <div class="panel-heading">
+        <section class="panel workers-panel">
+          <div class="panel-heading">
+            <div>
+              <p class="eyebrow">cluster</p>
+              <h2>Workers</h2>
+            </div>
+          </div>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>ID</th><th>Status</th><th>Last seen</th></tr></thead>
+              <tbody id="workers"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+
+    </main>
+    <dialog id="history-modal" class="history-modal" aria-labelledby="history-title">
+      <div class="modal-card">
+        <div class="modal-heading">
           <div>
-            <p class="eyebrow">history</p>
+            <p class="eyebrow">job history</p>
             <h2 id="history-title">Job history</h2>
           </div>
-          <button id="close-history" class="button secondary">Close</button>
+          <button id="close-history" class="icon-button" type="button" aria-label="Close history">×</button>
         </div>
-        <pre id="history"></pre>
-      </section>
-    </main>
+        <div class="job-summary">
+          <div>
+            <span class="summary-label">Command</span>
+            <code id="history-command">—</code>
+          </div>
+          <div>
+            <span class="summary-label">Result</span>
+            <pre id="history-result">—</pre>
+          </div>
+        </div>
+        <div id="history" class="timeline"></div>
+      </div>
+    </dialog>
     <script src="/dashboard/app.js"></script>
   </body>
 </html>

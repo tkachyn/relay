@@ -1,5 +1,7 @@
 # Relay protocol
 
+<img src="logo.png" alt="Relay logo" width="120">
+
 Relay uses JSON over HTTP. The default address is `http://127.0.0.1:8080`.
 
 The API does not provide authentication or authorization. Bind it to a trusted interface and submit only commands that are safe to execute on worker hosts.
