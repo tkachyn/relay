@@ -46,6 +46,8 @@ func main() {
 		err = runCancel(os.Args[2:])
 	case "workers":
 		err = runWorkers(os.Args[2:])
+	case "stats":
+		err = runStats(os.Args[2:])
 	default:
 		usage()
 		os.Exit(2)
@@ -243,6 +245,19 @@ func runWorkers(args []string) error {
 	return nil
 }
 
+func runStats(args []string) error {
+	flags := flag.NewFlagSet("stats", flag.ContinueOnError)
+	serverURL := flags.String("server", "http://127.0.0.1:8080", "relay server URL")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	stats, err := client.New(*serverURL).GetStats()
+	if err != nil {
+		return err
+	}
+	return printJSON(stats)
+}
+
 func printJSON(value any) error {
 	encoded, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {
@@ -253,5 +268,5 @@ func printJSON(value any) error {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: relay <server|worker|submit|jobs|job|history|cancel|workers>")
+	fmt.Fprintln(os.Stderr, "usage: relay <server|worker|submit|jobs|job|history|cancel|workers|stats>")
 }

@@ -150,8 +150,11 @@ relay jobs [--server url]
 relay job [--server url] <id>
 relay cancel [--server url] <id>
 relay workers [--server url]
+relay stats [--server url]
 relay history [--server url] <id>
 ```
+
+`relay stats` prints queue counts, worker health, and current metric values as JSON.
 
 ## HTTP API
 
