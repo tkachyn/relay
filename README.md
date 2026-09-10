@@ -64,6 +64,23 @@ queued or running -> cancelled
 
 Higher priority values are claimed first. Jobs with equal priority are claimed in creation order.
 
+## Repository layout
+
+| Path | Purpose |
+| --- | --- |
+| `cmd/relay/` | Main command line interface for running the server, workers, and client operations |
+| `cmd/relay-load/` | HTTP load generator for repeatable submission tests |
+| `internal/api/` | Shared HTTP request and response types |
+| `internal/client/` | Go client for interacting with a Relay server |
+| `internal/dashboard/` | Embedded operations dashboard and static assets |
+| `internal/job/` | Job lifecycle models and history events |
+| `internal/metrics/` | Prometheus-compatible metrics collection |
+| `internal/persistence/` | Atomic JSON state snapshots and recovery |
+| `internal/queue/` | Priority/FIFO scheduling, retries, expiration, and worker recovery |
+| `internal/server/` | HTTP API, monitoring, persistence, and operational endpoints |
+| `internal/worker/` | Worker registration, polling, heartbeats, and command execution |
+| `docs/` | Architecture, protocol, persistence, and benchmark guides |
+
 ## Quick start
 
 Start the server:
@@ -158,20 +175,22 @@ relay history [--server url] <id>
 
 ## HTTP API
 
-- `GET /healthz` checks server availability
-- `POST /v1/jobs` creates a job
-- `GET /v1/jobs` lists jobs
-- `GET /v1/jobs/{id}` returns one job
-- `GET /v1/jobs/{id}/history` returns lifecycle events
-- `POST /v1/jobs/{id}/cancel` cancels a job
-- `POST /v1/workers/register` registers a worker
-- `POST /v1/workers/{id}/heartbeat` records worker health
-- `GET /v1/workers` lists workers
-- `POST /v1/workers/{id}/claim` claims the next queued job
-- `POST /v1/jobs/{id}/result` reports a worker result
-- `GET /v1/stats` returns queue and worker statistics
-- `GET /metrics` returns Prometheus-compatible metrics
-- `GET /dashboard/` serves the embedded dashboard
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `GET` | `/healthz` | Check server availability |
+| `POST` | `/v1/jobs` | Create a job |
+| `GET` | `/v1/jobs` | List jobs |
+| `GET` | `/v1/jobs/{id}` | Return one job |
+| `GET` | `/v1/jobs/{id}/history` | Return lifecycle events |
+| `POST` | `/v1/jobs/{id}/cancel` | Cancel a job |
+| `POST` | `/v1/workers/register` | Register a worker |
+| `POST` | `/v1/workers/{id}/heartbeat` | Record worker health |
+| `GET` | `/v1/workers` | List workers |
+| `POST` | `/v1/workers/{id}/claim` | Claim the next queued job |
+| `POST` | `/v1/jobs/{id}/result` | Report a worker result |
+| `GET` | `/v1/stats` | Return queue and worker statistics |
+| `GET` | `/metrics` | Return Prometheus-compatible metrics |
+| `GET` | `/dashboard/` | Serve the embedded dashboard |
 
 Create a job:
 
