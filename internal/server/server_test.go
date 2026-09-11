@@ -98,6 +98,55 @@ func TestClaimReturnsEmptyWhenNoJobsAreAvailable(t *testing.T) {
 	}
 }
 
+func TestJobSubmissionRejectsInvalidJSONAndTimeouts(t *testing.T) {
+	testServer := httptest.NewServer(New().Handler())
+	defer testServer.Close()
+
+	tests := []struct {
+		name       string
+		body       string
+		statusCode int
+	}{
+		{
+			name:       "trailing json",
+			body:       `{"payload":"echo ok"} {"payload":"echo again"}`,
+			statusCode: http.StatusBadRequest,
+		},
+		{
+			name:       "negative timeout",
+			body:       `{"payload":"echo ok","timeout":"-1s"}`,
+			statusCode: http.StatusBadRequest,
+		},
+		{
+			name:       "zero timeout",
+			body:       `{"payload":"echo ok","timeout":"0s"}`,
+			statusCode: http.StatusBadRequest,
+		},
+		{
+			name:       "oversized body",
+			body:       `{"payload":"` + strings.Repeat("x", 1<<20) + `"}`,
+			statusCode: http.StatusRequestEntityTooLarge,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			response, err := testServer.Client().Post(
+				testServer.URL+"/v1/jobs",
+				"application/json",
+				strings.NewReader(test.body),
+			)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer response.Body.Close()
+			if response.StatusCode != test.statusCode {
+				t.Fatalf("got status %d, expected %d", response.StatusCode, test.statusCode)
+			}
+		})
+	}
+}
+
 func TestServerRestoresJobsAndWorkers(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "relay-state.json")
 	first, err := NewWithOptions(Options{StoragePath: path})

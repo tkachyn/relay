@@ -21,7 +21,9 @@ The API does not provide authentication or authorization. Bind it to a trusted i
 
 `type` defaults to `command`. `payload` is required. `priority` defaults to zero. `max_retries` counts additional attempts after the initial attempt. `timeout` uses Go duration syntax. `run_at` is optional and must be RFC3339.
 
-The response is `201 Created` with the complete job object.
+The response is `201 Created` with the complete job object. Request bodies must
+contain exactly one JSON value and are limited to 1 MiB. `timeout`, when
+provided, must be a positive Go duration.
 
 ## Job inspection
 

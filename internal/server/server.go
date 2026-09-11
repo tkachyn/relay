@@ -46,6 +46,8 @@ type Options struct {
 	Logger           *slog.Logger
 }
 
+const maxJSONBodySize = 1 << 20
+
 // new creates an in-memory server with default recovery settings
 func New() *Server {
 	server, err := NewWithOptions(Options{})
@@ -171,8 +173,9 @@ func (s *Server) jobs(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if request.Timeout != "" {
-			if _, err := time.ParseDuration(request.Timeout); err != nil {
-				writeError(w, http.StatusBadRequest, "timeout must be a valid duration")
+			timeout, err := time.ParseDuration(request.Timeout)
+			if err != nil || timeout <= 0 {
+				writeError(w, http.StatusBadRequest, "timeout must be a positive duration")
 				return
 			}
 		}
@@ -579,8 +582,20 @@ func writeQueueError(w http.ResponseWriter, err error) {
 
 func decodeJSON(w http.ResponseWriter, r *http.Request, destination any) bool {
 	defer r.Body.Close()
-	if err := json.NewDecoder(r.Body).Decode(destination); err != nil {
+	decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxJSONBodySize))
+	if err := decoder.Decode(destination); err != nil {
+		var maxBytesError *http.MaxBytesError
+		if errors.As(err, &maxBytesError) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body is too large")
+			return false
+		}
 		writeError(w, http.StatusBadRequest, "invalid json")
+		return false
+	}
+
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		writeError(w, http.StatusBadRequest, "request body must contain one JSON value")
 		return false
 	}
 	return true

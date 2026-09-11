@@ -206,3 +206,13 @@ func TestJobHistoryRecordsTransitions(t *testing.T) {
 		}
 	}
 }
+
+func TestRetryDelayKeepsConfiguredBaseWhenMaxIsSmaller(t *testing.T) {
+	q := NewWithOptions(Options{
+		RetryBaseDelay: 2 * time.Minute,
+		RetryMaxDelay:  time.Minute,
+	})
+	if got := q.retryDelay(1); got != 2*time.Minute {
+		t.Fatalf("got retry delay %s, expected 2m", got)
+	}
+}

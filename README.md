@@ -156,7 +156,7 @@ relay submit [--server url] [--type type] [--priority number]
 
 The command can contain spaces when passed as one quoted argument. The command's combined standard output and standard error are returned as the job result.
 
-`--max-retries` controls how many additional attempts are allowed after the initial attempt. `--timeout` accepts Go duration strings such as `30s` or `2m`.
+`--max-retries` controls how many additional attempts are allowed after the initial attempt. `--timeout` accepts positive Go duration strings such as `30s` or `2m`.
 
 `--run-at` accepts an RFC3339 timestamp. `relay history <id>` prints the lifecycle events recorded for a job.
 

@@ -55,7 +55,7 @@ func NewWithOptions(options Options) *Queue {
 		options.RetryBaseDelay = time.Second
 	}
 	if options.RetryMaxDelay < options.RetryBaseDelay {
-		options.RetryMaxDelay = time.Minute
+		options.RetryMaxDelay = options.RetryBaseDelay
 	}
 	if options.Policy != PolicyFIFO {
 		options.Policy = PolicyPriority
@@ -253,10 +253,10 @@ func (q *Queue) failLocked(stored *job.Job, result, failure string, now time.Tim
 func (q *Queue) retryDelay(attempt int) time.Duration {
 	delay := q.retryBaseDelay
 	for index := 1; index < attempt && delay < q.retryMaxDelay; index++ {
-		delay *= 2
-		if delay >= q.retryMaxDelay {
+		if delay > q.retryMaxDelay/2 {
 			return q.retryMaxDelay
 		}
+		delay *= 2
 	}
 	return delay
 }

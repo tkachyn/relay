@@ -3,6 +3,7 @@ const elements = {
   running: document.querySelector("#running"),
   completed: document.querySelector("#completed"),
   failed: document.querySelector("#failed"),
+  cancelled: document.querySelector("#cancelled"),
   healthyWorkers: document.querySelector("#healthy-workers"),
   metrics: document.querySelector("#metrics-cards"),
   jobs: document.querySelector("#jobs"),
@@ -131,6 +132,7 @@ async function refresh() {
     elements.running.textContent = stats.queue.running;
     elements.completed.textContent = stats.queue.completed;
     elements.failed.textContent = stats.queue.failed;
+    elements.cancelled.textContent = stats.queue.cancelled;
     elements.healthyWorkers.textContent = stats.workers.healthy;
     renderMetrics(stats.metrics);
     renderJobs(jobs.jobs);
